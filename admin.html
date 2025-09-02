@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin — Jotna-si-express</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 1000px; margin: 20px auto; padding: 0 12px; }
+    .card { border:1px solid #ddd; border-radius:8px; padding:12px; margin:12px 0;}
+    input { padding:8px; margin:4px; }
+    button { background:#0a7cff; color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; margin:4px; }
+    .danger { background:#c00; }
+    .muted { color:#666; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid #eee; padding:8px; text-align:left; }
+  </style>
+</head>
+<body>
+  <h1>Tableau de bord admin</h1>
+
+  <div class="card">
+    <h3>Connexion admin</h3>
+    <input id="email" placeholder="Email admin"/>
+    <input id="password" type="password" placeholder="Mot de passe"/>
+    <button id="login">Se connecter</button>
+    <button id="logout" class="danger">Se déconnecter</button>
+    <div id="status" class="muted"></div>
+  </div>
+
+  <div class="card">
+    <h3>Configuration prix</h3>
+    <input id="min" type="number" value="500"/> 
+    <input id="max" type="number" value="1000"/>
+    <button id="saveConfig">Enregistrer</button>
+  </div>
+
+  <div class="card">
+    <h3>Approuver les livreurs</h3>
+    <table>
+      <thead><tr><th>Nom</th><th>Téléphone</th><th>Email</th><th>Actions</th></tr></thead>
+      <tbody id="pending"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Livreurs actifs</h3>
+    <table>
+      <thead><tr><th>Nom</th><th>Téléphone</th><th>UID</th><th>Actions</th></tr></thead>
+      <tbody id="drivers"></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>Partenaires</h3>
+    <input id="pname" placeholder="Nom partenaire"/>
+    <input id="pphone" placeholder="Téléphone"/>
+    <input id="pcat" placeholder="Catégorie (ex: resto, boutique)"/>
+    <button id="addPartner">Ajouter</button>
+    <table>
+      <thead><tr><th>Nom</th><th>Téléphone</th><th>Catégorie</th><th>Actif</th><th>Actions</th></tr></thead>
+      <tbody id="partners"></tbody>
+    </table>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="./config.js"></script>
+  <script>
+    firebase.initializeApp(window.firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+    const el = id => document.getElementById(id);
+
+    let unsubPending = null, unsubDrivers = null, unsubPartners = null, unsubConfig = null;
+
+    function requireAdmin(user) {
+      if (!user) { el('status').innerText = 'Non connecté.'; return false; }
+      return db.collection('admins').doc(user.uid).get().then(s => {
+        const ok = s.exists;
+        el('status').innerText = ok ? 'Connecté comme admin ✅' : 'Connecté, mais pas admin ❌';
+        return ok;
+      });
+    }
+
+    function listenData() {
+      stopListening();
+      unsubConfig = db.collection('config').doc('app').onSnapshot(s => {
+        const d = s.data() || {};
+        el('min').value = d.priceMin ?? 500;
+        el('max').value = d.priceMax ?? 1000;
+      });
+      unsubPending = db.collection('driversPending').orderBy('createdAt', 'asc').onSnapshot(s => {
+        el('pending').innerHTML = '';
+        s.forEach(doc => {
+          const d = doc.data();
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${d.name || ''}</td><td>${d.phone || ''}</td><td>${d.email || ''}</td>`;
+          const td = document.createElement('td');
+          const approve = document.createElement('button');
+          approve.textContent = 'Approuver';
+          approve.onclick = async () => {
+            await db.collection('drivers').doc(doc.id).set({ name: d.name || '', phone: d.phone || '', active: true });
+            await doc.ref.delete();
+          };
+          const reject = document.createElement('button');
+          reject.textContent = 'Rejeter';
+          reject.className = 'danger';
+          reject.onclick = async () => { await doc.ref.delete(); };
+          td.appendChild(approve); td.appendChild(reject);
+          tr.appendChild(td);
+          el('pending').appendChild(tr);
+        });
+        if (s.empty) el('pending').innerHTML = '<tr><td colspan="4" class="muted">Aucun en attente</td></tr>';
+      });
+      unsubDrivers = db.collection('drivers').onSnapshot(s => {
+        el('drivers').innerHTML = '';
+        s.forEach(doc => {
+          const d = doc.data();
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${d.name}</td><td>${d.phone}</td><td>${doc.id}</td>`;
+          const td = document.createElement('td');
+          const deactivate = document.createElement('button');
+          deactivate.textContent = d.active ? 'Désactiver' : 'Activer';
+          deactivate.onclick = async () => { await doc.ref.update({ active: !d.active }); };
+          const remove = document.createElement('button');
+          remove.textContent = 'Supprimer';
+          remove.className = 'danger';
+          remove.onclick = async () => { await doc.ref.delete(); };
+          td.appendChild(deactivate); td.appendChild(remove);
+          tr.appendChild(td);
+          el('drivers').appendChild(tr);
+        });
+        if (s.empty) el('drivers').innerHTML = '<tr><td colspan="4" class="muted">Aucun livreur</td></tr>';
+      });
+      unsubPartners = db.collection('partners').onSnapshot(s => {
+        el('partners').innerHTML = '';
+        s.forEach(doc => {
+          const p = doc.data();
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${p.name}</td><td>${p.phone}</td><td>${p.category || ''}</td><td>${p.active ? 'Oui' : 'Non'}</td>`;
+          const td = document.createElement('td');
+          const toggle = document.createElement('button');
+          toggle.textContent = p.active ? 'Désactiver' : 'Activer';
+          toggle.onclick = async () => { await doc.ref.update({ active: !p.active }); };
+          const del = document.createElement('button');
+          del.textContent = 'Supprimer';
+          del.className = 'danger';
+          del.onclick = async () => { await doc.ref.delete(); };
+          td.appendChild(toggle); td.appendChild(del);
+          tr.appendChild(td);
+          el('partners').appendChild(tr);
+        });
+        if (s.empty) el('partners').innerHTML = '<tr><td colspan="5" class="muted">Aucun partenaire</td></tr>';
+      });
+    }
+    function stopListening() {
+      if (unsubPending) unsubPending(); if (unsubDrivers) unsubDrivers();
+      if (unsubPartners) unsubPartners(); if (unsubConfig) unsubConfig();
+      unsubPending = unsubDrivers = unsubPartners = unsubConfig = null;
+    }
+
+    el('login').onclick = async () => {
+      const email = el('email').value.trim();
+      const pass = el('password').value.trim();
+      const cred = await auth.signInWithEmailAndPassword(email, pass);
+      const ok = await requireAdmin(cred.user);
+      if (ok) listenData();
+    };
+    el('logout').onclick = async () => { await auth.signOut(); el('status').innerText = 'Déconnecté.'; stopListening(); };
+
+    el('saveConfig').onclick = async () => {
+      const min = Number(el('min').value), max = Number(el('max').value);
+      if (min < 500 || max > 1000 || min > max) return alert('Plage autorisée: 500 à 1000 FCFA.');
+      await db.collection('config').doc('app').set({ priceMin: min, priceMax: max }, { merge: true });
+      alert('Config enregistrée.');
+    };
+
+    el('addPartner').onclick = async () => {
+      const name = el('pname').value.trim();
+      const phone = el('pphone').value.trim();
+      const category = el('pcat').value.trim();
+      if (!name || !phone) return alert('Nom et téléphone requis.');
+      await db.collection('partners').add({ name, phone, category, active: true });
+      el('pname').value = el('pphone').value = el('pcat').value = '';
+    };
+
+    // A la première connexion admin, tu dois te "déclarer" dans /admins:
+    // 1) Te connecter
+    // 2) Aller dans la console Firestore et créer /admins/{ton uid}
+    auth.onAuthStateChanged(async (user) => {
+      if (user) {
+        const ok = await requireAdmin(user);
+        if (ok) listenData(); else stopListening();
+      } else {
+        stopListening();
+      }
+    });
+  </script>
+</body>
+</html>
