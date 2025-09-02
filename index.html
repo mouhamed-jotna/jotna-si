@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Jotna-si-express — Commander</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 700px; margin: 20px auto; padding: 0 12px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }
+    button { background:#0a7cff; color:#fff; border:none; padding:10px 16px; border-radius:6px; cursor:pointer; }
+    button:disabled { background:#aaa; cursor:not-allowed; }
+    input, textarea { width:100%; padding:10px; margin:6px 0 12px; border:1px solid #ccc; border-radius:6px; }
+    .ok { color: #0a7cff; font-weight: 600; }
+    .err { color: #c00; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <h1>Jotna-si-express</h1>
+  <p>Commandez une livraison maintenant. Un livreur reçoit votre demande en temps réel.</p>
+
+  <div class="card">
+    <label>Nom complet</label>
+    <input id="name" placeholder="Votre nom" />
+    <label>Téléphone</label>
+    <input id="phone" placeholder="Ex: 77 123 45 67" />
+    <label>Adresse de prise en charge</label>
+    <input id="pickup" placeholder="Adresse complète" />
+    <label>Adresse de livraison</label>
+    <input id="dropoff" placeholder="Adresse complète" />
+    <label>Détails (optionnel)</label>
+    <textarea id="notes" placeholder="Colis, instructions, etc."></textarea>
+    <label>Prix (500 à 1000 FCFA)</label>
+    <input id="price" type="number" min="500" max="1000" step="50" value="500" />
+    <button id="submit">Commander</button>
+    <div id="msg"></div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+  <script src="./config.js"></script>
+  <script>
+    firebase.initializeApp(window.firebaseConfig);
+    const db = firebase.firestore();
+
+    const el = id => document.getElementById(id);
+    el('submit').onclick = async () => {
+      const name = el('name').value.trim();
+      const phone = el('phone').value.trim();
+      const pickup = el('pickup').value.trim();
+      const dropoff = el('dropoff').value.trim();
+      const notes = el('notes').value.trim();
+      const price = Number(el('price').value);
+
+      if (!name || !phone || !pickup || !dropoff) {
+        el('msg').innerHTML = '<div class="err">Remplis tous les champs obligatoires.</div>'; return;
+      }
+      if (price < 500 || price > 1000) {
+        el('msg').innerHTML = '<div class="err">Le prix doit être entre 500 et 1000 FCFA.</div>'; return;
+      }
+
+      el('submit').disabled = true;
+      try {
+        await db.collection('orders').add({
+          customerName: name,
+          customerPhone: phone,
+          pickupAddress: pickup,
+          dropoffAddress: dropoff,
+          notes,
+          price,
+          status: 'pending',
+          assignedDriverUid: null,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        el('msg').innerHTML = '<div class="ok">Commande envoyée ! Un livreur va l\'accepter.</div>';
+        el('name').value = el('phone').value = el('pickup').value = el('dropoff').value = el('notes').value = '';
+        el('price').value = 500;
+      } catch (e) {
+        console.error(e);
+        el('msg').innerHTML = '<div class="err">Erreur lors de l\'envoi. Réessaie.</div>';
+      } finally {
+        el('submit').disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>
